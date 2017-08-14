@@ -37,7 +37,7 @@
       <!--
       can't use 6.x, yet as 2.x fails due to https://github.com/elastic/elasticsearch-hadoop/issues/1034
       -->
-      <version>5.5.1</version>
+      <version>6.0.0.BUILD-SNAPSHOT</version>
     </dependency>
 
     <dependency>
