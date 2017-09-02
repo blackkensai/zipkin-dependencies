@@ -33,17 +33,11 @@ class LazyElasticsearchHttpStorage extends LazyCloseable<ElasticsearchHttpStorag
   static final String INDEX = "test_zipkin";
 
   final String image;
-  final boolean singleTypeIndexingEnabled;
 
   GenericContainer container;
 
   LazyElasticsearchHttpStorage(String image) {
-    this(image, false);
-  }
-
-  LazyElasticsearchHttpStorage(String image, boolean singleTypeIndexingEnabled) {
     this.image = image;
-    this.singleTypeIndexingEnabled = singleTypeIndexingEnabled;
   }
 
   @Override protected ElasticsearchHttpStorage compute() {
@@ -80,7 +74,6 @@ class LazyElasticsearchHttpStorage extends LazyCloseable<ElasticsearchHttpStorag
         : new OkHttpClient();
     ElasticsearchHttpStorage.Builder builder = ElasticsearchHttpStorage.builder(ok).index(INDEX);
     builder.flushOnWrites(true);
-    builder.singleTypeIndexingEnabled(singleTypeIndexingEnabled);
     return builder.hosts(Arrays.asList("http://" + esNodes()));
   }
 
