@@ -14,14 +14,12 @@
 package zipkin.dependencies.elasticsearch;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.io.StringReader;
 import java.net.URI;
 import java.text.SimpleDateFormat;
-import java.util.Collections;
-import java.util.Date;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import java.util.TimeZone;
+import java.util.*;
+
 import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
@@ -42,8 +40,9 @@ import zipkin.internal.gson.stream.MalformedJsonException;
 import static zipkin.internal.Util.checkNotNull;
 import static zipkin.internal.Util.midnightUTC;
 
-public final class ElasticsearchDependenciesJob {
+public final class ElasticsearchDependenciesJob implements Serializable {
   private static final Logger log = LoggerFactory.getLogger(ElasticsearchDependenciesJob.class);
+  private static Random random = new Random();;
 
   public static Builder builder() {
     return new Builder();
@@ -55,6 +54,7 @@ public final class ElasticsearchDependenciesJob {
     String hosts = getEnv("ES_HOSTS", "127.0.0.1");
     String username = getEnv("ES_USERNAME", null);
     String password = getEnv("ES_PASSWORD", null);
+    double sampleRate;
 
     final Map<String, String> sparkProperties = new LinkedHashMap<>();
 
@@ -71,6 +71,11 @@ public final class ElasticsearchDependenciesJob {
               getSystemPropertyAsFileResource("javax.net.ssl.trustStore"));
       sparkProperties.put("es.net.ssl.truststore.pass",
               System.getProperty("javax.net.ssl.trustStorePassword", ""));
+      try {
+        sampleRate = Double.parseDouble(getEnv("ES_SAMPLE_RATE", "0.01"));
+      } catch (NumberFormatException e) {
+        sampleRate = 0.01;
+      }
     }
 
     // local[*] master lets us run & test the job locally without setting a Spark cluster
@@ -137,12 +142,14 @@ public final class ElasticsearchDependenciesJob {
   final String index;
   final long day;
   final String dateStamp;
+  final double sampleRate;
   final SparkConf conf;
   @Nullable final Runnable logInitializer;
 
   ElasticsearchDependenciesJob(Builder builder) {
     this.index = builder.index;
     this.day = builder.day;
+    this.sampleRate = builder.sampleRate;
     String dateSeparator = getEnv("ES_DATE_SEPARATOR", "-");
     SimpleDateFormat df = new SimpleDateFormat("yyyy-MM-dd".replace("-", dateSeparator));
     df.setTimeZone(TimeZone.getTimeZone("UTC"));
@@ -193,11 +200,23 @@ public final class ElasticsearchDependenciesJob {
     }
   }
 
+  static boolean sampler(Tuple2<String, String> tuple, int sampleRateInt) {
+    return random.nextInt(10000) <= sampleRateInt;
+  }
+
   void run(String spanResource, String dependencyLinkResource, Function<byte[], Span> decoder) {
     log.info("Processing spans from {}", spanResource);
     JavaSparkContext sc = new JavaSparkContext(conf);
+    Integer sampleRateInt = (int) (sampleRate * 10000);
+    log.info("Try to accept spans {} / {}, others are skipped.", sampleRateInt, 10000);
     try {
       JavaRDD<Map<String, Object>> links = JavaEsSpark.esJsonRDD(sc, spanResource)
+          .filter(new Function<Tuple2<String, String>, Boolean>() {
+            @Override
+            public Boolean call(Tuple2<String, String> tuple2) throws Exception {
+              return sampler(tuple2, sampleRateInt);
+            }
+          })
           .groupBy(pair -> traceId(pair._2))
           .flatMapValues(new TraceIdAndJsonToDependencyLinks(logInitializer, decoder))
           .values()
